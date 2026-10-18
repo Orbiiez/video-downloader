@@ -631,6 +631,9 @@ class App:
 
     def update_ytdlp(self):
         self.flash("Updating the download engine…")
+        if vdl_core.FROZEN:  # no pip in the packaged app: fetch yt-dlp's self-contained zip build instead
+            threading.Thread(target=self.update_engine_zip, daemon=True).start()
+            return
         py = os.path.join(os.path.dirname(sys.executable), "python.exe")
         py = py if os.path.exists(py) else sys.executable
 
@@ -646,6 +649,28 @@ class App:
                 self.root.after(0, lambda: messagebox.showerror(APP, "Update failed:\n" + err[0]))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def update_engine_zip(self):
+        import urllib.request
+        import yt_dlp.version
+        api = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+        try:
+            req = urllib.request.Request(api, headers={"User-Agent": APP})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                rel = json.load(r)
+            if rel["tag_name"] == yt_dlp.version.__version__:
+                msg = "Already up to date."
+            else:
+                asset = next(a for a in rel["assets"] if a["name"] == "yt-dlp")  # the zipimport build
+                os.makedirs(os.path.dirname(vdl_core.ENGINE_ZIP), exist_ok=True)
+                tmp = vdl_core.ENGINE_ZIP + ".new"
+                urllib.request.urlretrieve(asset["browser_download_url"], tmp)
+                os.replace(tmp, vdl_core.ENGINE_ZIP)
+                msg = f"Updated to {rel['tag_name']}. Restart the app to use the new version."
+            self.root.after(0, lambda: messagebox.showinfo(APP, msg))
+        except Exception as e:
+            err = vdl_core.clean_error(e)
+            self.root.after(0, lambda: messagebox.showerror(APP, "Update failed:\n" + err))
 
     # ---------- window ----------
     def on_canvas_resize(self, e):

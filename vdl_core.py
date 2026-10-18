@@ -11,11 +11,32 @@ import mimetypes
 import os
 import re
 import shutil
+import sys
 import threading
 import urllib.parse
 import urllib.request
 
 import vdl_cookies
+
+# Packaged .exe: ffmpeg/node ship in bin/, and "Update downloader" drops a newer yt-dlp in the app data folder.
+FROZEN = getattr(sys, "frozen", False)
+BUNDLE_BIN = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "bin")
+ENGINE_ZIP = os.path.join(vdl_cookies.APP_DIR, "engine", "yt-dlp.zip")
+
+
+def _load_updated_engine():
+    if not (FROZEN and os.path.exists(ENGINE_ZIP)):
+        return
+    sys.path.insert(0, ENGINE_ZIP)
+    try:
+        import yt_dlp  # noqa: F401
+    except Exception:  # broken download: fall back to the bundled copy
+        sys.path.remove(ENGINE_ZIP)
+        for name in [m for m in sys.modules if m == "yt_dlp" or m.startswith("yt_dlp.")]:
+            del sys.modules[name]
+
+
+_load_updated_engine()
 
 VIDEO_EXTS = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".flv", ".wmv", ".ts", ".3gp", ".ogv", ".mpg", ".mpeg"}
 GENERIC_BINARY = {"", "application/octet-stream", "binary/octet-stream", "application/binary", "application/force-download"}
@@ -46,8 +67,13 @@ def clean_error(e):
     return msg.split("\n")[0] or e.__class__.__name__
 
 
+def find_bundled(name):
+    exe = os.path.join(BUNDLE_BIN, name + ".exe")
+    return exe if os.path.exists(exe) else None
+
+
 def find_ffmpeg():
-    exe = shutil.which("ffmpeg")
+    exe = find_bundled("ffmpeg") or shutil.which("ffmpeg")
     if exe:
         return exe
     try:
@@ -213,7 +239,7 @@ def ytdlp_download(url, out_dir, quality="Best available", cookies_browser=None,
         "retries": 5, "fragment_retries": 10,
         "concurrent_fragment_downloads": 4,
         # YouTube needs a JS runtime; allow node as well as yt-dlp's default deno.
-        "js_runtimes": {"deno": {}, "node": {}},
+        "js_runtimes": {"deno": {}, "node": {"path": find_bundled("node")}},
     }
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg

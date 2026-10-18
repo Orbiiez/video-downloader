@@ -6,3 +6,6 @@ __pycache__/
 *.bin
 cookies*.txt
 *.cookies
+build/
+dist/
+*.spec
