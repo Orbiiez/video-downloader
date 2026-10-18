@@ -1,6 +1,6 @@
 """Build the standalone Windows release: dist/Video Downloader/ and dist/VideoDownloader-<version>-win64.zip.
 
-Usage: python build.py <version>      e.g. python build.py 1.0.0
+Usage: python build.py      (the version comes from version.py)
 Needs (on the build machine only): pip install -r requirements.txt pyinstaller, and Node.js installed.
 """
 import os
@@ -10,12 +10,14 @@ import sys
 
 import imageio_ffmpeg
 
+from version import VERSION
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAME = "Video Downloader"
 
 
 def main():
-    version = sys.argv[1] if len(sys.argv) > 1 else "dev"
+    version = VERSION
     node = shutil.which("node")
     if not node:
         sys.exit("Node.js not found on PATH; it is bundled so YouTube works without it on users' PCs.")

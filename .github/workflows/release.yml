@@ -1,0 +1,137 @@
+# Builds the Windows app and publishes a GitHub release.
+#
+# Usual way: Actions tab -> "Release" -> Run workflow -> type a version like 1.2.0.
+#   It sets version.py to that number, builds and smoke-tests the .exe, then commits,
+#   tags v1.2.0 and publishes the release with the zip and a list of changes.
+#   Tick "dry run" to only build and test (the zip is kept as a workflow artifact).
+# Also runs when a v* tag is pushed by hand; version.py must already match that tag.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version, e.g. 1.2.0"
+        required: true
+      dry_run:
+        description: "Dry run: build and test only, don't publish"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
+            if ($env:GITHUB_REF -ne "refs/heads/main") { throw "Run this from the main branch." }
+            $v = $env:INPUT_VERSION.Trim().TrimStart("v")
+          } else {
+            $v = $env:GITHUB_REF_NAME.TrimStart("v")
+          }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.0 (got '$v')." }
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and (git tag -l "v$v")) { throw "v$v already exists." }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Releasing v$v"
+
+      - name: Set version.py
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
+            $text = (Get-Content version.py -Raw) -replace 'VERSION = "[^"]*"', "VERSION = `"$env:V`""
+            Set-Content version.py $text -NoNewline -Encoding utf8NoBOM
+          }
+          $current = python -c "from version import VERSION; print(VERSION)"
+          if ($current -ne $env:V) { throw "version.py says $current but the tag is v$env:V." }
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build
+        run: python build.py
+
+      - name: Smoke test (the app opens and stays open)
+        run: |
+          $env:APPDATA = "$env:RUNNER_TEMP\appdata"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $p = Start-Process -FilePath "dist\Video Downloader\Video Downloader.exe" -PassThru
+          Start-Sleep 15
+          if ($p.HasExited) { throw "The app closed by itself (exit code $($p.ExitCode))." }
+          Stop-Process -Id $p.Id -Force
+          "App started fine."
+
+      - name: Keep the zip (dry run)
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoDownloader-${{ steps.ver.outputs.version }}-win64
+          path: dist/VideoDownloader-${{ steps.ver.outputs.version }}-win64.zip
+
+      - name: Commit version and tag
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add version.py
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) { git commit -m "Release v$env:V" }
+          git tag "v$env:V"
+          git push origin HEAD:main "v$env:V"
+          if ($LASTEXITCODE -ne 0) { throw "Push failed." }
+
+      - name: Publish the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          V: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $prev = git describe --tags --abbrev=0 "v$env:V^" 2>$null
+          $range = if ($prev) { "$prev..v$env:V" } else { "v$env:V" }
+          $changes = git log $range --no-merges --format="- %s" | Where-Object { $_ -notmatch '^- Release v' }
+          if (-not $changes) { $changes = "- Maintenance release" }
+          $notes = @(
+            "**To use:** download ``VideoDownloader-$env:V-win64.zip``, extract it anywhere, and run ``Video Downloader.exe``. Nothing else to install."
+            ""
+            "Already have 1.1.0 or newer? The app shows an **Update to v$env:V** button; it opens this page."
+            ""
+            "### Changes"
+            $changes
+            ""
+            "Windows SmartScreen may warn the first time, because the app isn't code-signed. Click **More info → Run anyway**."
+          ) -join "`n"
+          Set-Content notes.md $notes -Encoding utf8NoBOM
+          gh release create "v$env:V" "dist/VideoDownloader-$env:V-win64.zip" --title "Video Downloader $env:V" --notes-file notes.md --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw "Publishing failed." }

@@ -23,6 +23,7 @@ if sys.stderr is None:
 
 import vdl_cookies
 import vdl_core
+from version import VERSION
 
 try:  # thumbnails and the header logo; the app still works without Pillow
     from PIL import Image, ImageDraw, ImageTk
@@ -30,7 +31,6 @@ except ImportError:
     Image = None
 
 APP = "Video Downloader"
-VERSION = "1.1.0"
 RELEASES_API = "https://api.github.com/repos/Orbiiez/video-downloader/releases/latest"
 SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "VideoDownloader", "settings.json")
 RES = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
