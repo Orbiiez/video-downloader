@@ -34,5 +34,5 @@ YouTube needs Node.js or Deno installed when running from source.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) and yt-dlp-ejs: Unlicense
 - [FFmpeg](https://ffmpeg.org): GPL build from [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg); source at https://ffmpeg.org/download.html
 - [Node.js](https://nodejs.org): MIT
-- [Sun Valley ttk theme](https://github.com/rdbende/Sun-Valley-ttk-theme): MIT
+- [Pillow](https://python-pillow.org): MIT-CMU (HPND)
 - Python: PSF License

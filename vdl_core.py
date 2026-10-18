@@ -217,6 +217,7 @@ def ytdlp_download(url, out_dir, quality="Best available", cookies_browser=None,
         if progress:
             info = d.get("info_dict") or {}
             progress({"status": d["status"], "title": info.get("title"), "file": d.get("filename"),
+                      "thumbnail": info.get("thumbnail"), "duration": info.get("duration"),
                       "downloaded": d.get("downloaded_bytes"),
                       "total": d.get("total_bytes") or d.get("total_bytes_estimate"),
                       "speed": d.get("speed"), "eta": d.get("eta"),

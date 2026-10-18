@@ -28,9 +28,11 @@ def main():
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onedir",
         "--name", NAME,
+        "--icon", os.path.join(HERE, "assets", "icon.ico"),
         "--add-data", f"{bin_dir}{os.pathsep}bin",
-        "--collect-all", "yt_dlp", "--collect-all", "yt_dlp_ejs", "--collect-all", "sv_ttk",
-        "--exclude-module", "imageio_ffmpeg",
+        "--add-data", f"{os.path.join(HERE, 'assets')}{os.pathsep}assets",
+        "--collect-all", "yt_dlp", "--collect-all", "yt_dlp_ejs",
+        "--exclude-module", "imageio_ffmpeg", "--exclude-module", "numpy",
         os.path.join(HERE, f"{NAME}.pyw"),
     ], cwd=HERE, check=True)
 

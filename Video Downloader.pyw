@@ -10,6 +10,9 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
+import urllib.parse
+import urllib.request
 from tkinter import filedialog, messagebox, ttk
 
 # pythonw has no console; give stray prints somewhere harmless to go.
@@ -21,11 +24,38 @@ if sys.stderr is None:
 import vdl_cookies
 import vdl_core
 
+try:  # thumbnails and the header logo; the app still works without Pillow
+    from PIL import Image, ImageDraw, ImageTk
+except ImportError:
+    Image = None
+
 APP = "Video Downloader"
+VERSION = "1.1.0"
 SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "VideoDownloader", "settings.json")
+RES = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 URL_TOKEN = re.compile(r"^(https?://\S+|(www\.)?[\w-]+(\.[\w-]+)+(/\S*)?)$", re.I)
 ACTIVE = ("starting", "downloading", "processing")
 SAVED_LOGIN = "Saved login"
+
+# ---------- look ----------
+BG = "#0e0e11"
+SURFACE = "#16161a"
+RAISED = "#202027"
+LINE = "#2a2a32"
+TEXT = "#eceae4"
+MUTED = "#8b8993"
+FAINT = "#5c5a64"
+LIME = "#d4ff4f"
+ON_LIME = "#101012"
+AMBER = "#ffb547"
+ERR = "#ff6a55"
+
+# Segoe Fluent Icons / MDL2 glyphs
+G_PLAY, G_FOLDER, G_CLOSE, G_RETRY = "", "", "", ""
+G_LOCK, G_DOWN, G_MORE, G_CHEV, G_LINK = "", "", "", "", ""
+G_SCREEN, G_STACK, G_PASTE = "", "", ""
+
+THUMB_W, THUMB_H = 128, 72  # at 100% scaling
 
 
 def fmt_bytes(n):
@@ -48,21 +78,239 @@ def shorten(text, n=95):
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def windows_dark_mode():
+def site_of(url):
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+class Fonts:
+    """Resolved once Tk exists; falls back to plain Segoe UI / Consolas on Windows 10."""
+
+    def __init__(self, root):
+        have = set(tkfont.families(root))
+        pick = lambda *names: next((n for n in names if n in have), names[-1])
+        ui = pick("Segoe UI Variable Text", "Segoe UI")
+        display = pick("Segoe UI Variable Display", "Segoe UI")
+        mono = pick("Cascadia Mono", "Consolas")
+        icon = pick("Segoe Fluent Icons", "Segoe MDL2 Assets")
+        self.body = (ui, 10)
+        self.small = (ui, 9)
+        self.title = (display, 11, "bold")
+        self.brand = (display, 14, "bold")
+        self.empty = (display, 15, "bold")
+        self.mono = (mono, 9)
+        self.mono_small = (mono, 8)
+        self.icon = (icon, 11)
+        self.icon_small = (icon, 8)
+        self.icon_big = (icon, 30)
+        self.button = (ui, 10, "bold")
+
+
+def dark_title_bar(win):
+    """Windows 11: title bar in the app's own colors (Windows 10: just dark)."""
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+        import ctypes
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        set_attr = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        set_attr(hwnd, 20, ctypes.byref(ctypes.c_int(1)), 4)  # immersive dark mode
+        rgb = int(BG[5:7] + BG[3:5] + BG[1:3], 16)  # COLORREF is 0x00BBGGRR
+        set_attr(hwnd, 35, ctypes.byref(ctypes.c_int(rgb)), 4)  # caption color
+        set_attr(hwnd, 34, ctypes.byref(ctypes.c_int(rgb)), 4)  # border color
     except Exception:
-        return False
+        pass
+
+
+def set_icon(win):
+    try:
+        win.iconbitmap(os.path.join(RES, "assets", "icon.ico"))
+    except tk.TclError:
+        pass
+
+
+def style_menu(menu, fonts):
+    menu.configure(tearoff=0, bg=RAISED, fg=TEXT, activebackground=LIME, activeforeground=ON_LIME,
+                   selectcolor=LIME, font=fonts.body, relief="flat", bd=0, activeborderwidth=0)
+    return menu
+
+
+# ---------- small widgets ----------
+class Tooltip:
+    def __init__(self, widget, text, fonts):
+        self.widget, self.text, self.fonts, self.tip, self._after = widget, text, fonts, None, None
+        widget.bind("<Enter>", self.schedule, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+
+    def schedule(self, e=None):
+        self._after = self.widget.after(450, self.show)
+
+    def show(self):
+        if self.tip or not self.widget.winfo_exists():
+            return
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        tk.Label(self.tip, text=self.text, bg=RAISED, fg=TEXT, font=self.fonts.small, padx=8, pady=3,
+                 highlightthickness=1, highlightbackground=LINE).pack()
+        self.tip.update_idletasks()
+        self.tip.geometry(f"+{x - self.tip.winfo_width() // 2}+{y}")
+
+    def hide(self, e=None):
+        if self._after:
+            self.widget.after_cancel(self._after)
+            self._after = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
+class Btn(tk.Label):
+    """Flat button. kind: primary (lime), ghost (text only), icon (glyph only), icon-primary."""
+
+    def __init__(self, parent, text, command, fonts, kind="ghost", bg=BG, tip=None, **kw):
+        self.command, self.kind, self.base_bg = command, kind, bg
+        icon = kind.startswith("icon")
+        font = fonts.icon if icon else (fonts.button if kind == "primary" else fonts.body)
+        pad = (7, 5) if icon else ((18, 8) if kind == "primary" else (10, 5))
+        super().__init__(parent, text=text, font=font, cursor="hand2", padx=pad[0], pady=pad[1], **kw)
+        self.paint(False)
+        self.bind("<Enter>", lambda e: self.paint(True))
+        self.bind("<Leave>", lambda e: self.paint(False))
+        self.bind("<ButtonRelease-1>", self.click)
+        if tip:
+            Tooltip(self, tip, fonts)
+
+    def paint(self, hover):
+        if self.kind == "primary":
+            self.configure(bg="#e2ff85" if hover else LIME, fg=ON_LIME)
+        elif self.kind == "icon-primary":
+            self.configure(bg=RAISED if hover else self.base_bg, fg=LIME)
+        else:
+            self.configure(bg=RAISED if hover else self.base_bg, fg=TEXT if hover else MUTED)
+
+    def click(self, e):
+        if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height():
+            self.command()
+
+
+class Chip(tk.Frame):
+    """Rounded-looking option pill: icon, current value, chevron; click opens a menu."""
+
+    def __init__(self, parent, icon, fonts, build_menu, tip=None):
+        super().__init__(parent, bg=SURFACE, highlightthickness=1, highlightbackground=LINE, cursor="hand2")
+        self.fonts, self.build_menu = fonts, build_menu
+        self.glyph = tk.Label(self, text=icon, font=fonts.icon_small, bg=SURFACE, fg=LIME, padx=0)
+        self.glyph.pack(side="left", padx=(10, 6), pady=6)
+        self.label = tk.Label(self, font=fonts.body, bg=SURFACE, fg=TEXT)
+        self.label.pack(side="left")
+        self.chev = tk.Label(self, text=G_CHEV, font=fonts.icon_small, bg=SURFACE, fg=FAINT)
+        self.chev.pack(side="left", padx=(8, 10))
+        for w in (self, self.glyph, self.label, self.chev):
+            w.bind("<Enter>", lambda e: self.paint(True))
+            w.bind("<Leave>", lambda e: self.paint(False))
+            w.bind("<Button-1>", self.open)
+        if tip:
+            Tooltip(self, tip, fonts)
+
+    def set(self, text):
+        self.label.configure(text=text)
+
+    def paint(self, hover):
+        bg = RAISED if hover else SURFACE
+        for w in (self, self.glyph, self.label, self.chev):
+            w.configure(bg=bg)
+        self.configure(highlightbackground=FAINT if hover else LINE)
+
+    def open(self, e=None):
+        menu = style_menu(tk.Menu(self), self.fonts)
+        self.build_menu(menu)
+        menu.tk_popup(self.winfo_rootx(), self.winfo_rooty() + self.winfo_height() + 4)
+
+
+class Bar(tk.Canvas):
+    """3px progress line along the bottom of a card; slides a segment when progress is unknown."""
+
+    def __init__(self, parent, scale):
+        super().__init__(parent, height=max(2, round(3 * scale)), bg=LINE, highlightthickness=0, bd=0)
+        self.fraction, self.color, self.moving, self.phase = 0.0, LIME, False, 0.0
+        self.fill = self.create_rectangle(0, 0, 0, 0, width=0, fill=LIME)
+        self.bind("<Configure>", lambda e: self.draw())
+
+    def set(self, fraction, color, moving):
+        self.fraction, self.color, self.moving = fraction or 0.0, color, moving
+        self.draw()
+
+    def step(self):
+        self.phase = (self.phase + 0.012) % 1.3
+        self.draw()
+
+    def draw(self):
+        w, h = self.winfo_width(), self.winfo_height()
+        if self.moving:
+            x0 = (self.phase - 0.3) * w
+            self.coords(self.fill, x0, 0, x0 + 0.3 * w, h)
+        else:
+            self.coords(self.fill, 0, 0, w * self.fraction, h)
+        self.itemconfigure(self.fill, fill=self.color)
+
+
+# ---------- thumbnails ----------
+def rounded_thumb(img, size, radius, bg):
+    """Cover-crop to size, round the corners onto the card color."""
+    w, h = size
+    src_ratio, dst_ratio = img.width / img.height, w / h
+    if src_ratio > dst_ratio:
+        cw = int(img.height * dst_ratio)
+        img = img.crop(((img.width - cw) // 2, 0, (img.width - cw) // 2 + cw, img.height))
+    else:
+        ch = int(img.width / dst_ratio)
+        img = img.crop((0, (img.height - ch) // 2, img.width, (img.height - ch) // 2 + ch))
+    img = img.convert("RGB").resize((w * 2, h * 2), Image.LANCZOS)
+    mask = Image.new("L", img.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, img.width - 1, img.height - 1), radius=radius * 2, fill=255)
+    out = Image.new("RGB", img.size, bg)
+    out.paste(img, (0, 0), mask)
+    return out.resize((w, h), Image.LANCZOS)
+
+
+def placeholder_thumb(size, radius, dim=False):
+    """Dark tile with the app's play-down mark, for links that have no thumbnail (yet)."""
+    w, h = size[0] * 2, size[1] * 2
+    img = Image.new("RGB", (w, h), SURFACE)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius * 2, fill=RAISED)
+    s = h * 0.22
+    cx, cy = w / 2, h / 2 - s * 0.35
+    color = FAINT if dim else "#3d3d46"
+    d.polygon([(cx - s, cy - s * 0.7), (cx + s, cy - s * 0.7), (cx, cy + s * 0.75)], fill=color)
+    d.rounded_rectangle((cx - s * 1.1, cy + s * 1.15, cx + s * 1.1, cy + s * 1.4), radius=s * 0.12, fill=color)
+    return img.resize(size, Image.LANCZOS)
+
+
+def fetch_thumb(job, size, radius):
+    try:
+        req = urllib.request.Request(job.thumb_url, headers={"User-Agent": vdl_core.UA})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = r.read(8_000_000)
+        import io
+        job.thumb = rounded_thumb(Image.open(io.BytesIO(data)), size, radius, SURFACE)
+        job.dirty = True
+    except Exception:
+        pass  # keep the placeholder
 
 
 class Job:
     def __init__(self, url):
         self.url = url
         self.title = url
+        self.site = site_of(url)
+        self.duration = None
+        self.thumb_url = None
+        self.thumb = None  # PIL image once fetched
         self.state = "queued"
-        self.detail = "Waiting…"
+        self.detail = "Queued"
         self.fraction = None  # None = indeterminate
         self.paths = []
         self.error = None
@@ -77,6 +325,12 @@ class Job:
         st = d["status"]
         if d.get("title"):
             self.title = d["title"]
+        if d.get("duration"):
+            self.duration = d["duration"]
+        if d.get("thumbnail") and not self.thumb_url and Image and self.row:
+            self.thumb_url = d["thumbnail"]
+            threading.Thread(target=fetch_thumb, args=(self, self.row.thumb_size, self.row.radius),
+                             daemon=True).start()
         if st == "downloading":
             self.state = "downloading"
             if d.get("file") and d["file"] not in self._files:
@@ -94,10 +348,12 @@ class Job:
             if eta is None and speed and total and done is not None:
                 eta = max(0, (total - done) / speed)
             parts = []
+            if len(self._files) > 1:
+                parts.append(f"part {len(self._files)}")
             if total and done is not None:
                 self.fraction = min(1.0, done / total)
                 parts.append(f"{self.fraction:.0%}")
-                parts.append(f"{fmt_bytes(done)} of {fmt_bytes(total)}")
+                parts.append(f"{fmt_bytes(done)} / {fmt_bytes(total)}")
             elif d.get("fragments") and d.get("fragment"):
                 self.fraction = min(1.0, d["fragment"] / d["fragments"])
                 parts.append(f"{self.fraction:.0%}")
@@ -109,8 +365,7 @@ class Job:
                 parts.append(f"{fmt_bytes(speed)}/s")
             if eta:
                 parts.append(f"{fmt_eta(eta)} left")
-            label = "Downloading" if len(self._files) < 2 else f"Downloading part {len(self._files)}"
-            self.detail = f"{label} — " + " · ".join(parts)
+            self.detail = "  ·  ".join(parts)
         elif st == "processing":
             self.state = "processing"
             self.fraction = None
@@ -126,104 +381,133 @@ class Job:
             self.dirty = True
 
 
-class Row(ttk.Frame):
+class Row(tk.Frame):
+    """One download card: thumbnail, title, site/duration, status, actions, progress line."""
+
+    STATUS_COLOR = {"failed": ERR, "processing": AMBER, "downloading": TEXT}
+
     def __init__(self, app, job):
-        super().__init__(app.list_frame, padding=(12, 8, 12, 10))
+        super().__init__(app.list_frame, bg=SURFACE)
         self.app, self.job = app, job
-        self.columnconfigure(0, weight=1)
-        self.columnconfigure(1, minsize=int(300 * app.root.winfo_fpixels("1i") / 96))
-        self.title = ttk.Label(self, font=("Segoe UI Semibold", 10))
-        self.title.grid(row=0, column=0, sticky="w")
-        self.buttons = ttk.Frame(self)
-        self.buttons.grid(row=0, column=1, rowspan=3, sticky="e", padx=(10, 0))
-        self.bar = ttk.Progressbar(self, maximum=1.0)
-        self.bar.grid(row=1, column=0, sticky="ew", pady=(5, 3))
-        self.status = ttk.Label(self, font=("Segoe UI", 9), wraplength=620, justify="left")
-        self.status.grid(row=2, column=0, sticky="w")
-        ttk.Separator(self).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        f, s = app.fonts, app.scale
+        self.thumb_size, self.radius = (round(THUMB_W * s), round(THUMB_H * s)), round(6 * s)
+        self.columnconfigure(1, weight=1)
+
+        self.thumb = tk.Label(self, bg=SURFACE, bd=0)
+        self.thumb.grid(row=0, column=0, rowspan=3, padx=(12, 14), pady=12, sticky="w")
+        self._thumb_img, self._thumb_kind = None, None
+
+        self.title = tk.Label(self, font=f.title, bg=SURFACE, fg=TEXT, anchor="w")
+        self.title.grid(row=0, column=1, sticky="sew", pady=(12, 0))
+        meta = tk.Frame(self, bg=SURFACE)
+        meta.grid(row=1, column=1, sticky="w", pady=(4, 0))
+        self.badge = tk.Label(meta, font=f.mono_small, bg=RAISED, fg=MUTED, padx=6, pady=1)
+        self.badge.pack(side="left")
+        self.dur = tk.Label(meta, font=f.mono_small, bg=SURFACE, fg=FAINT)
+        self.dur.pack(side="left", padx=(8, 0))
+        self.status = tk.Label(self, font=f.mono, bg=SURFACE, fg=MUTED, anchor="w", justify="left",
+                               wraplength=600)
+        self.status.grid(row=2, column=1, sticky="nw", pady=(6, 12))
+
+        self.buttons = tk.Frame(self, bg=SURFACE)
+        self.buttons.grid(row=0, column=2, rowspan=3, padx=(8, 10))
+        self.bar = Bar(self, s)
+        self.bar.grid(row=3, column=0, columnspan=3, sticky="ew")
         self._shown_state = None
-        self._indeterminate = False
-        menu = tk.Menu(self, tearoff=0)
+
+        menu = style_menu(tk.Menu(self), f)
         menu.add_command(label="Copy link", command=lambda: app.copy(job.url))
         menu.add_command(label="Copy details", command=lambda: app.copy("\n".join([job.url, job.detail] + job.log)))
-        for w in (self, self.title, self.status, self.bar):
+        for w in (self, self.thumb, self.title, self.status, meta, self.badge):
             w.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+            w.bind("<Double-Button-1>", lambda e: self.app.open_file(job.paths[0]) if job.state == "done" else None)
 
-    def button(self, text, cmd, accent=False):
-        ttk.Button(self.buttons, text=text, command=cmd, style="Accent.TButton" if accent else "TButton",
-                   width=8).pack(side="left", padx=(6, 0))
+    def button(self, glyph, tip, cmd, primary=False):
+        Btn(self.buttons, glyph, cmd, self.app.fonts, kind="icon-primary" if primary else "icon", bg=SURFACE,
+            tip=tip).pack(side="left", padx=(2, 0))
+
+    def set_thumb(self):
+        j = self.job
+        kind = "real" if j.thumb is not None else ("dim" if j.state in ("failed", "cancelled") else "ph")
+        if not Image or kind == self._thumb_kind:
+            return
+        img = j.thumb if kind == "real" else placeholder_thumb(self.thumb_size, self.radius, dim=kind == "dim")
+        self._thumb_img = ImageTk.PhotoImage(img)
+        self.thumb.configure(image=self._thumb_img)
+        self._thumb_kind = kind
 
     def render(self):
         j = self.job
-        self.title.configure(text=shorten(j.title))
-        color = {"failed": self.app.err_color, "done": self.app.ok_color}.get(j.state, self.app.dim_color)
-        self.status.configure(text=j.detail, foreground=color)
+        self.set_thumb()
+        self.title.configure(text=shorten(j.title, 80), fg=FAINT if j.state == "cancelled" else TEXT)
+        self.badge.configure(text=(j.site or "link").upper())
+        self.dur.configure(text=fmt_eta(j.duration) if j.duration else "")
+        self.status.configure(text=j.detail, fg=self.STATUS_COLOR.get(j.state, MUTED))
         busy = j.state in ACTIVE and j.fraction is None
-        if busy and not self._indeterminate:
-            self.bar.configure(mode="indeterminate")
-            self.bar.start(12)
-        elif not busy:
-            if self._indeterminate:
-                self.bar.stop()
-            self.bar.configure(mode="determinate")
-            self.bar["value"] = 1.0 if j.state == "done" else (j.fraction or 0)
-        self._indeterminate = busy
-        if j.state != self._shown_state:  # rebuild buttons only when the state changes
+        color = {"failed": ERR, "processing": AMBER, "cancelled": FAINT}.get(j.state, LIME)
+        fraction = 1.0 if j.state in ("done", "failed") else (j.fraction or 0)
+        self.bar.set(fraction, color, busy)
+        if j.state != self._shown_state:  # rebuild buttons only when the state group changes
             group = lambda s: "active" if s in ACTIVE or s == "queued" else s
             if group(j.state) != group(self._shown_state or ""):
                 for b in self.buttons.winfo_children():
                     b.destroy()
                 if j.state in ACTIVE or j.state == "queued":
-                    self.button("Cancel", lambda: self.app.cancel(j))
+                    self.button(G_CLOSE, "Cancel download", lambda: self.app.cancel(j))
                 elif j.state == "done":
-                    self.button("Play", lambda: self.app.open_file(j.paths[0]), accent=True)
-                    self.button("Show", lambda: self.app.show_file(j.paths[0]))
-                    self.button("Remove", lambda: self.app.remove(j))
+                    self.button(G_PLAY, "Play", lambda: self.app.open_file(j.paths[0]), primary=True)
+                    self.button(G_FOLDER, "Show in folder", lambda: self.app.show_file(j.paths[0]))
+                    self.button(G_CLOSE, "Remove from list", lambda: self.app.remove(j))
                 else:
-                    self.button("Retry", lambda: self.app.retry(j), accent=True)
-                    self.button("Remove", lambda: self.app.remove(j))
+                    self.button(G_RETRY, "Try again", lambda: self.app.retry(j), primary=True)
+                    self.button(G_CLOSE, "Remove from list", lambda: self.app.remove(j))
             self._shown_state = j.state
 
 
 class SitePicker:
     """Modal list of the sites found in a cookies.txt; only the ticked ones are kept."""
 
-    def __init__(self, root, sites, preselected):
+    def __init__(self, app, sites, preselected):
+        f = app.fonts
         self.result = None
-        self.top = top = tk.Toplevel(root)
+        self.top = top = tk.Toplevel(app.root, bg=BG)
         top.title("Which logins to keep?")
-        top.transient(root)
+        top.transient(app.root)
         top.resizable(False, True)
-        frame = ttk.Frame(top, padding=16)
+        set_icon(top)
+        dark_title_bar(top)
+        frame = tk.Frame(top, bg=BG, padx=20, pady=18)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=f"This file has logins for {len(sites)} site{'s' * (len(sites) != 1)}.\n"
-                              "Tick only the ones you download videos from; the rest are thrown away.",
-                  justify="left").pack(anchor="w")
-        box = ttk.Frame(frame)
-        box.pack(fill="both", expand=True, pady=10)
-        self.lb = tk.Listbox(box, selectmode="multiple", height=min(14, max(4, len(sites))), width=40,
-                             activestyle="none", exportselection=False, font=("Segoe UI", 10))
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.lb.yview)
+        tk.Label(frame, text=f"This file has logins for {len(sites)} site{'s' * (len(sites) != 1)}",
+                 font=f.title, bg=BG, fg=TEXT).pack(anchor="w")
+        tk.Label(frame, text="Select only the ones you download videos from. The rest are thrown away.",
+                 font=f.body, bg=BG, fg=MUTED).pack(anchor="w", pady=(4, 0))
+        box = tk.Frame(frame, bg=SURFACE, highlightthickness=1, highlightbackground=LINE)
+        box.pack(fill="both", expand=True, pady=14)
+        self.lb = tk.Listbox(box, selectmode="multiple", height=min(14, max(4, len(sites))), width=44,
+                             activestyle="none", exportselection=False, font=f.mono, bg=SURFACE, fg=TEXT,
+                             selectbackground=LIME, selectforeground=ON_LIME, highlightthickness=0, bd=0)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.lb.yview, style="Slim.Vertical.TScrollbar")
         self.lb.configure(yscrollcommand=sb.set)
-        self.lb.pack(side="left", fill="both", expand=True)
+        self.lb.pack(side="left", fill="both", expand=True, padx=6, pady=6)
         sb.pack(side="left", fill="y")
         self.sites = sites
         for i, s in enumerate(sites):
             self.lb.insert("end", s)
             if s in preselected:
                 self.lb.selection_set(i)
-        btns = ttk.Frame(frame)
+        btns = tk.Frame(frame, bg=BG)
         btns.pack(fill="x")
-        ttk.Button(btns, text="Keep selected", style="Accent.TButton", command=self.ok).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=top.destroy).pack(side="right", padx=(0, 8))
-        ttk.Button(btns, text="Select none", command=lambda: self.lb.selection_clear(0, "end")).pack(side="left")
+        Btn(btns, "Keep selected", self.ok, f, kind="primary").pack(side="right")
+        Btn(btns, "Cancel", top.destroy, f).pack(side="right", padx=(0, 8))
+        Btn(btns, "Select none", lambda: self.lb.selection_clear(0, "end"), f).pack(side="left")
         top.grab_set()
         top.wait_window()
 
     def ok(self):
         picked = [self.sites[i] for i in self.lb.curselection()]
         if not picked:
-            messagebox.showinfo(APP, "Tick at least one site.", parent=self.top)
+            messagebox.showinfo(APP, "Select at least one site.", parent=self.top)
             return
         self.result = picked
         self.top.destroy()
@@ -234,122 +518,216 @@ class App:
         self.root = root
         self.jobs = []
         self.settings = self.load_settings()
+        self.fonts = f = Fonts(root)
+        self.scale = root.winfo_fpixels("1i") / 96
         root.title(APP)
-        root.geometry(self.settings.get("geometry", "1060x700"))
-        root.minsize(760, 520)
+        root.configure(bg=BG)
+        root.geometry(self.settings.get("geometry", "1060x720"))
+        root.minsize(780, 540)
+        set_icon(root)
+        dark_title_bar(root)
+        self.setup_ttk()
 
-        dark = windows_dark_mode()
-        try:
-            import sv_ttk
-            sv_ttk.set_theme("dark" if dark else "light")
-        except Exception:
-            dark = False
-        self.err_color = "#ff6b6b" if dark else "#c42b1c"
-        self.ok_color = "#4cc66a" if dark else "#0f7b0f"
-        self.dim_color = "#b0b0b0" if dark else "#555555"
-        text_bg, text_fg = ("#2b2b2b", "#f0f0f0") if dark else ("#ffffff", "#1a1a1a")
-
-        outer = ttk.Frame(root, padding=16)
+        outer = tk.Frame(root, bg=BG, padx=22, pady=16)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(4, weight=1)
 
-        # --- link input ---
-        ttk.Label(outer, text="Paste video links — one per line, as many as you like",
-                  font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
-        top = ttk.Frame(outer)
-        top.grid(row=1, column=0, sticky="ew", pady=(6, 10))
-        top.columnconfigure(0, weight=1)
-        self.text = tk.Text(top, height=4, wrap="none", font=("Segoe UI", 10), undo=True, relief="flat",
-                            bg=text_bg, fg=text_fg, insertbackground=text_fg, highlightthickness=1,
-                            highlightbackground="#555555" if dark else "#c8c8c8", highlightcolor="#3a8ee6",
-                            padx=8, pady=6)
-        self.text.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        # --- header: logo, name, live counts, overflow menu ---
+        head = tk.Frame(outer, bg=BG)
+        head.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self._logo = None
+        if Image:
+            px = round(26 * self.scale)
+            try:
+                self._logo = ImageTk.PhotoImage(Image.open(os.path.join(RES, "assets", "icon.png")).resize(
+                    (px, px), Image.LANCZOS))
+                tk.Label(head, image=self._logo, bg=BG).pack(side="left", padx=(0, 10))
+            except OSError:
+                pass
+        tk.Label(head, text=APP, font=f.brand, bg=BG, fg=TEXT).pack(side="left")
+        tk.Label(head, text=f"v{VERSION}", font=f.mono_small, bg=BG, fg=FAINT).pack(side="left", padx=(8, 0), pady=(5, 0))
+        more = Btn(head, G_MORE, self.open_more_menu, f, kind="icon", tip="More")
+        more.pack(side="right")
+        self.more_btn = more
+        self.summary = tk.Label(head, text="", font=f.mono, bg=BG, fg=MUTED)
+        self.summary.pack(side="right", padx=(0, 14))
+
+        # --- link dock ---
+        self.dock = dock = tk.Frame(outer, bg=SURFACE, highlightthickness=1, highlightbackground=LINE)
+        dock.grid(row=1, column=0, sticky="ew")
+        dock.columnconfigure(1, weight=1)
+        tk.Label(dock, text=G_LINK, font=f.icon, bg=SURFACE, fg=FAINT).grid(row=0, column=0, sticky="n",
+                                                                           padx=(14, 4), pady=(15, 0))
+        self.text = tk.Text(dock, height=3, wrap="none", font=f.body, undo=True, relief="flat", bd=0,
+                            bg=SURFACE, fg=TEXT, insertbackground=LIME, selectbackground=LIME,
+                            selectforeground=ON_LIME, highlightthickness=0, padx=8, pady=12)
+        self.text.grid(row=0, column=1, sticky="nsew")
+        self.placeholder = tk.Label(dock, text="Paste video links here, one per line", font=f.body,
+                                    bg=SURFACE, fg=FAINT, cursor="xterm", padx=0, pady=0, bd=0)
+        self.update_placeholder()
+        self.placeholder.bind("<Button-1>", lambda e: self.text.focus_set())
+        actions = tk.Frame(dock, bg=SURFACE)
+        actions.grid(row=0, column=2, sticky="e", padx=12, pady=12)
+        Btn(actions, G_PASTE, self.paste_and_add, f, kind="icon", bg=SURFACE,
+            tip="Paste from clipboard and download").pack(side="left", padx=(0, 8))
+        Btn(actions, "Download", self.add_from_text, f, kind="primary").pack(side="left")
         self.text.bind("<Control-Return>", lambda e: (self.add_from_text(), "break")[1])
         self.text.bind("<Return>", self.on_enter)
-        btns = ttk.Frame(top)
-        btns.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(10, 0))
-        ttk.Button(btns, text="Download", style="Accent.TButton", width=17,
-                   command=self.add_from_text).pack(fill="x")
-        ttk.Button(btns, text="Paste & Download", width=17, command=self.paste_and_add).pack(fill="x", pady=(8, 0))
+        self.text.bind("<FocusIn>", lambda e: dock.configure(highlightbackground="#59642f"))
+        self.text.bind("<FocusOut>", lambda e: dock.configure(highlightbackground=LINE))
+        for ev in ("<KeyRelease>", "<<Paste>>", "<<Modified>>"):
+            self.text.bind(ev, lambda e: self.root.after_idle(self.update_placeholder), add="+")
+        for seq in ("<Control-v>", "<Control-V>"):
+            self.text.bind(seq, self.on_global_paste)  # runs before the Text class's own paste
+            root.bind_all(seq, self.on_global_paste, add="+")
 
-        # --- options ---
-        opts = ttk.Frame(outer)
-        opts.grid(row=2, column=0, sticky="ew", pady=(0, 10))
-        opts.columnconfigure(1, weight=1)
-        ttk.Label(opts, text="Save to").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.out_var = tk.StringVar(value=self.settings.get("out_dir", vdl_core.DEFAULT_OUT))
-        ttk.Entry(opts, textvariable=self.out_var).grid(row=0, column=1, sticky="ew")
-        ttk.Button(opts, text="Change…", command=self.choose_dir).grid(row=0, column=2, padx=(8, 0))
-        ttk.Button(opts, text="Open folder", command=lambda: self.open_file(self.out_dir())).grid(row=0, column=3, padx=(8, 0))
-
-        opts2 = ttk.Frame(outer)
-        opts2.grid(row=3, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(opts2, text="Quality").pack(side="left")
+        # --- option chips ---
+        opts = tk.Frame(outer, bg=BG)
+        opts.grid(row=2, column=0, sticky="ew", pady=(10, 18))
         self.quality_var = tk.StringVar(value=self.settings.get("quality", "Best available"))
-        ttk.Combobox(opts2, textvariable=self.quality_var, values=list(vdl_core.QUALITIES), state="readonly",
-                     width=17).pack(side="left", padx=(8, 22))
-        ttk.Label(opts2, text="Downloads at once").pack(side="left")
         self.parallel_var = tk.IntVar(value=self.settings.get("parallel", 3))
-        ttk.Spinbox(opts2, from_=1, to=10, textvariable=self.parallel_var, width=4, state="readonly",
-                    command=self.schedule).pack(side="left", padx=(8, 22))
-        ttk.Label(opts2, text="Use login from").pack(side="left")
+        self.out_var = tk.StringVar(value=self.settings.get("out_dir", vdl_core.DEFAULT_OUT))
         vdl_cookies.sweep_temp()  # wipe temp cookie files a crash may have left behind
         self.login = vdl_cookies.status()
-        choices = ["None", SAVED_LOGIN] + vdl_core.BROWSERS
         choice = self.settings.get("cookies", "None")
-        if choice not in choices or (choice == SAVED_LOGIN and not self.has_login()):
+        if choice not in ["None", SAVED_LOGIN] + vdl_core.BROWSERS or (choice == SAVED_LOGIN and not self.has_login()):
             choice = "None"
         self.cookies_var = tk.StringVar(value=choice)
         self._last_cookie_choice = choice
-        cb = ttk.Combobox(opts2, textvariable=self.cookies_var, values=choices, state="readonly", width=13)
-        cb.pack(side="left", padx=(8, 0))
-        cb.bind("<<ComboboxSelected>>", self.on_cookie_choice)
-        self.cookie_hint = ttk.Label(opts2, foreground=self.dim_color)
-        self.cookie_hint.pack(side="left", padx=(8, 0))
-        self.forget_btn = ttk.Button(opts2, text="Forget", command=self.forget_login)
-        self.update_cookie_hint()
+
+        self.quality_chip = Chip(opts, G_SCREEN, f, self.quality_menu, tip="Quality")
+        self.parallel_chip = Chip(opts, G_STACK, f, self.parallel_menu, tip="How many download at the same time")
+        self.login_chip = Chip(opts, G_LOCK, f, self.login_menu, tip="Login for private or members-only videos")
+        self.folder_chip = Chip(opts, G_FOLDER, f, self.folder_menu, tip="Where videos are saved")
+        for chip in (self.quality_chip, self.parallel_chip, self.login_chip, self.folder_chip):
+            chip.pack(side="left", padx=(0, 8))
+        tk.Label(opts, text="Ctrl+V anywhere to paste & download", font=f.mono_small, bg=BG,
+                 fg=FAINT).pack(side="right")
+        self.update_chips()
         if self.login and self.login.get("expired"):
             root.after(600, lambda: messagebox.showinfo(
                 APP, f"Your saved login was older than {vdl_cookies.MAX_AGE_DAYS} days, so it was deleted "
                      "for safety.\n\nImport a fresh cookies.txt when you need it again."))
 
+        # --- queue header ---
+        qh = tk.Frame(outer, bg=BG)
+        qh.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        self.queue_label = tk.Label(qh, text="QUEUE", font=f.mono_small, bg=BG, fg=FAINT)
+        self.queue_label.pack(side="left")
+        Btn(qh, "Cancel all", self.cancel_all, f).pack(side="right")
+        Btn(qh, "Clear finished", self.clear_finished, f).pack(side="right", padx=(0, 4))
+
         # --- download list ---
-        box = ttk.Frame(outer, style="Card.TFrame", padding=2)
-        box.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
+        box = tk.Frame(outer, bg=BG)
+        box.grid(row=4, column=0, sticky="nsew")
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        style = ttk.Style()
-        list_bg = (style.lookup("TFrame", "background") or style.lookup(".", "background")
-                   or ("#1c1c1c" if dark else "#fafafa"))
-        self.canvas = tk.Canvas(box, highlightthickness=0, bd=0, bg=list_bg)
+        self.canvas = tk.Canvas(box, highlightthickness=0, bd=0, bg=BG)
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.canvas.yview)
-        sb.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(yscrollcommand=sb.set)
-        self.list_frame = ttk.Frame(self.canvas)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.canvas.yview, style="Slim.Vertical.TScrollbar")
+        sb.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+
+        def on_scroll(first, last):  # only show the scrollbar when there's something to scroll
+            sb.set(first, last)
+            (sb.grid_remove if float(first) <= 0 and float(last) >= 1 else sb.grid)()
+
+        self.canvas.configure(yscrollcommand=on_scroll)
+        self.list_frame = tk.Frame(self.canvas, bg=BG)
         self.list_frame.columnconfigure(0, weight=1)
         self._win = self.canvas.create_window(0, 0, window=self.list_frame, anchor="nw")
         self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind_all("<MouseWheel>", self.on_wheel)
-        self.empty = ttk.Label(self.list_frame, text="No downloads yet.\n\nPaste a link above and press Download.",
-                               foreground=self.dim_color, justify="center", font=("Segoe UI", 11))
-        self.empty.grid(row=0, column=0, pady=80)
 
-        # --- footer ---
-        foot = ttk.Frame(outer)
-        foot.grid(row=5, column=0, sticky="ew", pady=(10, 0))
-        self.summary = ttk.Label(foot, text="", foreground=self.dim_color)
-        self.summary.pack(side="left")
-        ttk.Button(foot, text="Update downloader", command=self.update_ytdlp).pack(side="right")
-        ttk.Button(foot, text="Cancel all", command=self.cancel_all).pack(side="right", padx=(0, 8))
-        ttk.Button(foot, text="Clear finished", command=self.clear_finished).pack(side="right", padx=(0, 8))
+        self.empty = tk.Frame(self.list_frame, bg=BG)
+        tk.Label(self.empty, text=G_DOWN, font=f.icon_big, bg=BG, fg=LINE).pack()
+        tk.Label(self.empty, text="Nothing in the queue", font=f.empty, bg=BG, fg=TEXT).pack(pady=(14, 4))
+        tk.Label(self.empty, text="Copy a video link, then press Ctrl+V anywhere in this window.",
+                 font=f.body, bg=BG, fg=MUTED).pack()
+        tk.Label(self.empty, text="YouTube · X · Reddit · TikTok · Vimeo · Twitch · 1800+ more",
+                 font=f.mono_small, bg=BG, fg=FAINT).pack(pady=(12, 0))
+        self.empty.grid(row=0, column=0, pady=90)
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.bind("<Destroy>", self.on_destroy)
         self.text.focus_set()
+        self._tick_id = self._anim_id = None
         self.tick()
+        self.animate()
+
+    def setup_ttk(self):
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.layout("Slim.Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+        style.configure("Slim.Vertical.TScrollbar", troughcolor=BG, background=RAISED, bordercolor=BG,
+                        lightcolor=RAISED, darkcolor=RAISED, gripcount=0, width=round(8 * self.scale))
+        style.map("Slim.Vertical.TScrollbar", background=[("active", LINE)])
+
+    # ---------- option chips ----------
+    def update_chips(self):
+        self.quality_chip.set(self.quality_var.get())
+        self.parallel_chip.set(f"{self.parallel()} at once")
+        c = self.cookies_var.get()
+        if c == SAVED_LOGIN and self.has_login():
+            sites = self.login["sites"]
+            more = f" +{len(sites) - 1}" if len(sites) > 1 else ""
+            self.login_chip.set(f"{shorten(sites[0], 18)}{more} · {self.login['days_left']}d")
+        elif c == "None":
+            self.login_chip.set("No login")
+        else:
+            self.login_chip.set(f"From {c.title()}")
+        out = self.out_dir()
+        home = os.path.expanduser("~")
+        self.folder_chip.set(shorten("~" + out[len(home):] if out.lower().startswith(home.lower()) else out, 34))
+
+    def quality_menu(self, menu):
+        for q in vdl_core.QUALITIES:
+            menu.add_radiobutton(label=q, variable=self.quality_var, value=q, command=self.on_option)
+
+    def parallel_menu(self, menu):
+        for n in range(1, 11):
+            menu.add_radiobutton(label=f"{n} at once", variable=self.parallel_var, value=n, command=self.on_option)
+
+    def login_menu(self, menu):
+        menu.add_radiobutton(label="No login", variable=self.cookies_var, value="None", command=self.on_cookie_choice)
+        label = SAVED_LOGIN if self.has_login() else "Import cookies.txt…"
+        menu.add_radiobutton(label=label, variable=self.cookies_var, value=SAVED_LOGIN, command=self.on_cookie_choice)
+        menu.add_separator()
+        for b in vdl_core.BROWSERS:
+            menu.add_radiobutton(label=f"Read from {b.title()}", variable=self.cookies_var, value=b,
+                                 command=self.on_cookie_choice)
+        if self.has_login():
+            menu.add_separator()
+            menu.add_command(label="Forget saved login", command=self.forget_login)
+
+    def folder_menu(self, menu):
+        menu.add_command(label="Change folder…", command=self.choose_dir)
+        menu.add_command(label="Open folder", command=lambda: self.open_file(self.out_dir()))
+
+    def open_more_menu(self):
+        menu = style_menu(tk.Menu(self.root), self.fonts)
+        menu.add_command(label="Update download engine", command=self.update_ytdlp)
+        menu.add_command(label="Open download folder", command=lambda: self.open_file(self.out_dir()))
+        menu.add_separator()
+        menu.add_command(label="About", command=self.about)
+        b = self.more_btn
+        menu.tk_popup(b.winfo_rootx() + b.winfo_width() - round(200 * self.scale), b.winfo_rooty() + b.winfo_height() + 4)
+
+    def about(self):
+        try:
+            import yt_dlp.version
+            engine = yt_dlp.version.__version__
+        except Exception:
+            engine = "not found"
+        messagebox.showinfo(APP, f"{APP} {VERSION}\nDownload engine: yt-dlp {engine}\n\n"
+                                 "github.com/Orbiiez/video-downloader")
+
+    def on_option(self):
+        self.update_chips()
+        self.schedule()
+        self.save_settings()
 
     # ---------- settings ----------
     def load_settings(self):
@@ -379,11 +757,23 @@ class App:
             return 3
 
     # ---------- adding links ----------
+    def update_placeholder(self):
+        if self.text.get("1.0", "end-1c"):
+            self.placeholder.place_forget()
+        else:
+            self.placeholder.place(in_=self.text, x=1, y=0)  # relative to inside the text's padding
+
     def on_enter(self, event):
         # Enter on a single-line box downloads; with several lines it just adds a new line.
         if "\n" not in self.text.get("1.0", "end-1c").strip():
             self.add_from_text()
             return "break"
+
+    def on_global_paste(self, event):
+        if event.widget is self.text and self.text.get("1.0", "end-1c").strip():
+            return None  # already typing a list in the box: normal paste
+        self.paste_and_add()
+        return "break"
 
     def add_from_text(self):
         raw = self.text.get("1.0", "end")
@@ -394,6 +784,7 @@ class App:
             return
         added = self.add_urls(urls)
         self.text.delete("1.0", "end")
+        self.update_placeholder()
         skipped = len(urls) - added
         self.flash(f"Added {added} link{'s' * (added != 1)}" + (f" ({skipped} already in the list)" if skipped else ""))
 
@@ -429,7 +820,8 @@ class App:
     def add_row(self, job):
         self.empty.grid_remove()
         job.row = Row(self, job)
-        job.row.grid(row=len(self.jobs), column=0, sticky="ew")
+        job.row.grid(row=len(self.jobs), column=0, sticky="ew", pady=(0, 8))
+        job.row.status.configure(wraplength=max(300, self.canvas.winfo_width() - round(320 * self.scale)))
         job.row.render()
         self.root.after(50, lambda: self.canvas.yview_moveto(1.0))
 
@@ -459,8 +851,10 @@ class App:
         if self.cookies_var.get() == SAVED_LOGIN and not self.has_login() and not self.import_login():
             self.cookies_var.set(self._last_cookie_choice)
             return
-        self._last_cookie_choice = self.cookies_var.get()
-        self.update_cookie_hint()
+        self._last_cookie_choice = c = self.cookies_var.get()
+        if c in ("chrome", "edge", "brave", "opera", "vivaldi", "chromium"):
+            self.flash("Chrome-based browsers often block this; a saved login is more reliable.")
+        self.update_chips()
         self.save_settings()
 
     def import_login(self):
@@ -469,10 +863,10 @@ class App:
                 "Choose a cookies.txt exported from your browser (e.g. with the 'Get cookies.txt LOCALLY' "
                 "extension, while logged in to the site).\n\n"
                 "Keep it safe: anyone with that file can log in as you. The app will:\n"
-                "  \u2022 keep only the sites you tick\n"
-                "  \u2022 store them encrypted so only your Windows account can read them\n"
-                f"  \u2022 forget them automatically after {vdl_cookies.MAX_AGE_DAYS} days\n"
-                "  \u2022 offer to wipe the original file")):
+                "  • keep only the sites you tick\n"
+                "  • store them encrypted so only your Windows account can read them\n"
+                f"  • forget them automatically after {vdl_cookies.MAX_AGE_DAYS} days\n"
+                "  • offer to wipe the original file")):
             return False
         path = filedialog.askopenfilename(title="Choose the cookies.txt you exported",
                                           initialdir=os.path.join(os.path.expanduser("~"), "Downloads"),
@@ -485,7 +879,7 @@ class App:
             messagebox.showerror(APP, f"Couldn't read that file:\n{e}")
             return False
         sites = vdl_cookies.domains_in(cookies)
-        keep = SitePicker(self.root, sites, vdl_cookies.suggested_sites(sites)).result
+        keep = SitePicker(self, sites, vdl_cookies.suggested_sites(sites)).result
         if not keep:
             return False
         try:
@@ -512,37 +906,22 @@ class App:
             self.cookies_var.set("None")
             self.on_cookie_choice()
 
-    def update_cookie_hint(self):
-        c = self.cookies_var.get()
-        self.forget_btn.pack_forget()
-        if c == SAVED_LOGIN and self.has_login():
-            sites = self.login["sites"]
-            more = f" +{len(sites) - 1}" if len(sites) > 1 else ""
-            text = f"\U0001F512 {shorten(sites[0], 18)}{more} \u00b7 {self.login['days_left']}d left"
-            self.forget_btn.pack(side="left", padx=(8, 0))
-        elif c in ("chrome", "edge", "brave", "opera", "vivaldi", "chromium"):
-            text = "(may fail; Saved login is more reliable)"
-        elif c == "None":
-            text = "(for login-only videos)"
-        else:
-            text = ""
-        self.cookie_hint.configure(text=text)
-
     def worker(self, job, out_dir, quality, cookies_browser, use_saved_login):
         try:
             job.paths = vdl_core.download(job.url, out_dir, quality, cookies_browser, progress=job.on_progress,
                                           cancel=job.cancel, log=job.on_log, use_saved_login=use_saved_login)
             job.state, job.fraction = "done", 1.0
             names = ", ".join(os.path.basename(p) for p in job.paths)
-            job.detail = f"Saved {names}" + (f"  ({fmt_bytes(self.size(job.paths))})" if self.size(job.paths) else "")
+            size = self.size(job.paths)
+            job.detail = (f"{fmt_bytes(size)}  ·  " if size else "") + f"saved as {names}"
             if job.title == job.url:
                 job.title = os.path.splitext(os.path.basename(job.paths[0]))[0]
         except vdl_core.Cancelled:
             job.state, job.detail = "cancelled", "Cancelled"
         except Exception as e:
             job.state, job.error = "failed", vdl_core.clean_error(e)
-            job.detail = "Failed: " + job.error
-            job.log.append(job.detail)
+            job.detail = job.error
+            job.log.append("Failed: " + job.error)
         job.dirty = True
 
     @staticmethod
@@ -561,11 +940,20 @@ class App:
         self.schedule()
         counts = {}
         for j in self.jobs:
-            key = "downloading" if j.state in ACTIVE else j.state
+            key = "active" if j.state in ACTIVE else j.state
             counts[key] = counts.get(key, 0) + 1
-        order = ["downloading", "queued", "done", "failed", "cancelled"]
-        self.summary.configure(text=self._flash or "  ·  ".join(f"{counts[k]} {k}" for k in order if counts.get(k)))
+        order = [("active", "↓"), ("queued", "…"), ("done", "✓"), ("failed", "✕")]
+        self.summary.configure(text=self._flash or "   ".join(f"{sym} {counts[k]} {k}" for k, sym in order
+                                                              if counts.get(k)),
+                               fg=LIME if self._flash else MUTED)
+        self.queue_label.configure(text=f"QUEUE · {len(self.jobs)}" if self.jobs else "QUEUE")
         self._tick_id = self.root.after(200, self.tick)
+
+    def animate(self):
+        for j in self.jobs:
+            if j.row and j.row.bar.moving:
+                j.row.bar.step()
+        self._anim_id = self.root.after(30, self.animate)
 
     _flash = None
 
@@ -589,7 +977,7 @@ class App:
 
     def retry(self, job):
         job.cancel = threading.Event()
-        job.state, job.detail, job.fraction, job.error, job.log, job._files = "queued", "Waiting…", None, None, [], []
+        job.state, job.detail, job.fraction, job.error, job.log, job._files = "queued", "Queued", None, None, [], []
         job.dirty = True
         self.schedule()
 
@@ -627,6 +1015,7 @@ class App:
         d = filedialog.askdirectory(initialdir=self.out_dir(), title="Save videos to")
         if d:
             self.out_var.set(os.path.normpath(d))
+            self.update_chips()
             self.save_settings()
 
     def update_ytdlp(self):
@@ -651,7 +1040,6 @@ class App:
         threading.Thread(target=run, daemon=True).start()
 
     def update_engine_zip(self):
-        import urllib.request
         import yt_dlp.version
         api = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
         try:
@@ -676,7 +1064,7 @@ class App:
     def on_canvas_resize(self, e):
         self.canvas.itemconfigure(self._win, width=e.width)
         for j in self.jobs:
-            j.row.status.configure(wraplength=max(300, e.width - 300))
+            j.row.status.configure(wraplength=max(300, e.width - round(320 * self.scale)))
 
     def on_wheel(self, e):
         if str(e.widget).startswith(str(self.canvas)) and self.list_frame.winfo_height() > self.canvas.winfo_height():
@@ -684,8 +1072,9 @@ class App:
 
     def on_destroy(self, e):
         if e.widget is self.root:
-            for timer in self.root.tk.splitlist(self.root.tk.call("after", "info")):
-                self.root.after_cancel(timer)
+            for timer in (self._tick_id, self._anim_id):
+                if timer:
+                    self.root.after_cancel(timer)
 
     def on_close(self):
         busy = [j for j in self.jobs if j.state in ACTIVE or j.state == "queued"]
