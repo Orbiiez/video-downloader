@@ -16,6 +16,7 @@ Downloads go to your `Downloads` folder by default. If a site stops working, cli
 
 - **Engine** (`vdl_core.py`): tries a direct HTTP download first, then yt-dlp, then falls back to scraping the page HTML.
 - **Saved login** (`vdl_cookies.py`): cookies are encrypted with Windows DPAPI and stored in `%APPDATA%\VideoDownloader\login.bin`. Each site gets its own temporary cookie file, and saved logins expire after 30 days. None of this is kept in the app folder.
+- most downloading needs won't require a login and will never require storing your cookies.
 - **GUI**: `Video Downloader.pyw`. Settings are saved to `%APPDATA%\VideoDownloader\settings.json`.
 - **CLI**: `video_dl.py <url> [-o folder]` (or `video_dl.bat`), when run from source.
 
@@ -27,15 +28,6 @@ pythonw "Video Downloader.pyw"
 ```
 
 YouTube needs Node.js or Deno installed when running from source.
-
-## Building a release
-
-```
-pip install -r requirements.txt pyinstaller
-python build.py 1.0.0
-```
-
-This needs Node.js installed, because `node.exe` gets bundled. The output is `dist/VideoDownloader-1.0.0-win64.zip`.
 
 ## Third-party software in the release
 
