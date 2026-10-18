@@ -364,11 +364,20 @@ class _ThreadLog(logging.Handler):
 _gallery_ready = False
 
 
+_gallery_lock = threading.Lock()
+
+
 def _gallery():
     global _gallery_ready
-    gdl = _engine("gallery_dl")
-    if not _gallery_ready:
+    if _gallery_ready:
+        return sys.modules["gallery_dl"]
+    with _gallery_lock:
+        gdl = _engine("gallery_dl")
+        if _gallery_ready:
+            return gdl
         from gallery_dl import config, job, extractor  # noqa: F401 (loads the submodules)
+        # The site list loads lazily and isn't safe to fill from two threads at once: load it all now.
+        list(extractor.extractors())
         from gallery_dl.extractor.message import Message
         gdl.Message = Message
         config.set(("output",), "private", True)  # keep _http_headers/_fallback in DataJob results
@@ -378,7 +387,7 @@ def _gallery():
         lg.setLevel(logging.INFO)
         lg.propagate = False
         _gallery_ready = True
-    return gdl
+        return gdl
 
 
 def warm_up():
@@ -416,10 +425,19 @@ def _specific_extractor(url):
     return name
 
 
+_ie_lock = threading.Lock()
+_ie_list = None
+
+
 def _match_extractor(url):
-    from yt_dlp.extractor import gen_extractor_classes  # noqa: imports yt_dlp
-    _engine("yt_dlp")
-    for ie in gen_extractor_classes():
+    global _ie_list
+    if _ie_list is None:
+        with _ie_lock:
+            if _ie_list is None:
+                _engine("yt_dlp")
+                from yt_dlp.extractor import gen_extractor_classes
+                _ie_list = list(gen_extractor_classes())
+    for ie in _ie_list:
         key = ie.ie_key()
         if key != "Generic" and ie.suitable(url):
             return key
