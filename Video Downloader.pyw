@@ -370,8 +370,7 @@ class Job:
         elif st == "processing":
             self.state = "processing"
             self.fraction = None
-            step = {"Merger": "Merging video and audio", "ExtractAudio": "Converting to mp3",
-                    "FixupM3u8": "Fixing up stream", "MoveFiles": "Finishing"}.get(d.get("step"), "Finishing")
+            step = d.get("step") or "Finishing"
             self.detail = step + "…"
         self.dirty = True
 
@@ -587,7 +586,7 @@ class App:
         # --- option chips ---
         opts = tk.Frame(outer, bg=BG)
         opts.grid(row=2, column=0, sticky="ew", pady=(10, 18))
-        self.quality_var = tk.StringVar(value=self.settings.get("quality", "Best available"))
+        self.quality_var = tk.StringVar(value=self.settings.get("quality", "1080p"))
         self.parallel_var = tk.IntVar(value=self.settings.get("parallel", 3))
         self.out_var = tk.StringVar(value=self.settings.get("out_dir", vdl_core.DEFAULT_OUT))
         vdl_cookies.sweep_temp()  # wipe temp cookie files a crash may have left behind
@@ -686,7 +685,7 @@ class App:
         self.folder_chip.set(shorten("~" + out[len(home):] if out.lower().startswith(home.lower()) else out, 34))
 
     def quality_menu(self, menu):
-        for q in vdl_core.QUALITIES:
+        for q in vdl_core.LEGACY_QUALITY:
             menu.add_radiobutton(label=q, variable=self.quality_var, value=q, command=self.on_option)
 
     def parallel_menu(self, menu):
@@ -938,8 +937,9 @@ class App:
 
     def worker(self, job, out_dir, quality, cookies_browser, use_saved_login):
         try:
-            job.paths = vdl_core.download(job.url, out_dir, quality, cookies_browser, progress=job.on_progress,
-                                          cancel=job.cancel, log=job.on_log, use_saved_login=use_saved_login)
+            job.paths = vdl_core.download(job.url, {"out_dir": out_dir, "quality": quality},
+                                          login=vdl_core.Login(cookies_browser, None, use_saved_login),
+                                          progress=job.on_progress, cancel=job.cancel, log=job.on_log)
             job.state, job.fraction = "done", 1.0
             names = ", ".join(os.path.basename(p) for p in job.paths)
             size = self.size(job.paths)
