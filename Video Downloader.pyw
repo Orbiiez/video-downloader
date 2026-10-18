@@ -31,6 +31,7 @@ except ImportError:
 
 APP = "Video Downloader"
 VERSION = "1.1.0"
+RELEASES_API = "https://api.github.com/repos/Orbiiez/video-downloader/releases/latest"
 SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "VideoDownloader", "settings.json")
 RES = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 URL_TOKEN = re.compile(r"^(https?://\S+|(www\.)?[\w-]+(\.[\w-]+)+(/\S*)?)$", re.I)
@@ -550,6 +551,7 @@ class App:
         more = Btn(head, G_MORE, self.open_more_menu, f, kind="icon", tip="More")
         more.pack(side="right")
         self.more_btn = more
+        self.update_btn = None  # "Update to vX" appears here when a newer release exists
         self.summary = tk.Label(head, text="", font=f.mono, bg=BG, fg=MUTED)
         self.summary.pack(side="right", padx=(0, 14))
 
@@ -655,6 +657,7 @@ class App:
         self._tick_id = self._anim_id = None
         self.tick()
         self.animate()
+        threading.Thread(target=self.check_app_update, daemon=True).start()
 
     def setup_ttk(self):
         style = ttk.Style(self.root)
@@ -708,12 +711,39 @@ class App:
 
     def open_more_menu(self):
         menu = style_menu(tk.Menu(self.root), self.fonts)
+        menu.add_command(label="Check for app updates", command=lambda: threading.Thread(
+            target=self.check_app_update, args=(True,), daemon=True).start())
         menu.add_command(label="Update download engine", command=self.update_ytdlp)
         menu.add_command(label="Open download folder", command=lambda: self.open_file(self.out_dir()))
         menu.add_separator()
         menu.add_command(label="About", command=self.about)
         b = self.more_btn
         menu.tk_popup(b.winfo_rootx() + b.winfo_width() - round(200 * self.scale), b.winfo_rooty() + b.winfo_height() + 4)
+
+    def check_app_update(self, manual=False):
+        """Ask GitHub for the latest release; offer it in the header if it's newer than this build."""
+        def ver(tag):
+            return tuple(int(n) for n in re.findall(r"\d+", tag)[:3])
+        try:
+            req = urllib.request.Request(RELEASES_API, headers={"User-Agent": APP})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                rel = json.load(r)
+            newer = ver(rel["tag_name"]) > ver(VERSION)
+            self.root.after(0, lambda: self.show_app_update(rel["tag_name"], rel["html_url"]) if newer else
+                            (manual and messagebox.showinfo(APP, f"You have the latest version ({VERSION}).")))
+        except Exception as e:
+            if manual:
+                err = vdl_core.clean_error(e)
+                self.root.after(0, lambda: messagebox.showerror(APP, "Couldn't check for updates:\n" + err))
+
+    def show_app_update(self, tag, url):
+        if self.update_btn:
+            return
+        import webbrowser
+        self.update_btn = Btn(self.summary.master, f"Update to {tag}", lambda: webbrowser.open(url), self.fonts,
+                              kind="primary", tip="A new version is out: opens the download page")
+        self.update_btn.configure(padx=12, pady=2, font=self.fonts.small + ("bold",))
+        self.update_btn.pack(side="right", padx=(0, 12), before=self.summary)
 
     def about(self):
         try:
