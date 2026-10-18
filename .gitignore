@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+# machine-specific shortcut
+*.lnk
+# never commit login/cookie data
+*.bin
+cookies*.txt
+*.cookies
