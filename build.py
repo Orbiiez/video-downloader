@@ -33,7 +33,7 @@ def main():
         "--icon", os.path.join(HERE, "assets", "icon.ico"),
         "--add-data", f"{bin_dir}{os.pathsep}bin",
         "--add-data", f"{os.path.join(HERE, 'assets')}{os.pathsep}assets",
-        "--collect-all", "yt_dlp", "--collect-all", "yt_dlp_ejs",
+        "--collect-all", "yt_dlp", "--collect-all", "yt_dlp_ejs", "--collect-all", "gallery_dl",
         "--exclude-module", "imageio_ffmpeg", "--exclude-module", "numpy",
         os.path.join(HERE, f"{NAME}.pyw"),
     ], cwd=HERE, check=True)

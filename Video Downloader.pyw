@@ -657,6 +657,7 @@ class App:
         self.tick()
         self.animate()
         threading.Thread(target=self.check_app_update, daemon=True).start()
+        threading.Thread(target=vdl_core.warm_up, daemon=True).start()  # load the site lists early
 
     def setup_ttk(self):
         style = ttk.Style(self.root)
