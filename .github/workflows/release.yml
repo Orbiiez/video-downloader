@@ -81,15 +81,29 @@ jobs:
       - name: Build
         run: python build.py
 
-      - name: Smoke test (the app opens and stays open)
+      - name: Smoke test (the app opens, its window loads the page, and it stays open)
         run: |
           $env:APPDATA = "$env:RUNNER_TEMP\appdata"
           New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
           $p = Start-Process -FilePath "dist\Video Downloader\Video Downloader.exe" -PassThru
-          Start-Sleep 15
+          $inst = "$env:APPDATA\VideoDownloader\instance.json"
+          $connected = $false
+          for ($i = 0; $i -lt 40 -and -not $connected; $i++) {
+            Start-Sleep 1
+            if ($p.HasExited) { throw "The app closed by itself (exit code $($p.ExitCode))." }
+            if (Test-Path $inst) {
+              $info = Get-Content $inst -Raw | ConvertFrom-Json
+              try {
+                $r = Invoke-RestMethod -Uri "http://127.0.0.1:$($info.port)/api/ping" -Headers @{ "X-Token" = $info.token } -TimeoutSec 3
+                if ($r.clients -ge 1) { $connected = $true }
+              } catch { }
+            }
+          }
+          if (-not $connected) { throw "The app's window never loaded its page." }
+          Start-Sleep 5
           if ($p.HasExited) { throw "The app closed by itself (exit code $($p.ExitCode))." }
           Stop-Process -Id $p.Id -Force
-          "App started fine."
+          "App started and its window connected."
 
       - name: Keep the zip (dry run)
         if: inputs.dry_run

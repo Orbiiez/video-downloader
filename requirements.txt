@@ -1,5 +1,8 @@
 yt-dlp[default]
 gallery-dl
+pywebview
+segno
 PySocks
 imageio-ffmpeg
+# only for make_icon.py:
 pillow
