@@ -229,8 +229,12 @@ def find_ffmpeg():
     return exe
 
 
+_FILENAME_SWAPS = str.maketrans({":": " -", '"': "'", "/": "-", "\\": "-", "|": "-", "?": "", "*": "", "<": "", ">": ""})
+
+
 def safe_filename(name, fallback="video"):
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    name = re.sub(r"[\x00-\x1f]", " ", name.translate(_FILENAME_SWAPS))
+    name = re.sub(r" - -", " -", name).strip(" .")
     name = re.sub(r"\s+", " ", name)
     if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\..*)?", name):
         name = "_" + name

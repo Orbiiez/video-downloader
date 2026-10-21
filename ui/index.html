@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en" class="preload">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0c0c0f">
+<title>Video Downloader</title>
+<link rel="icon" href="/icon.png">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3.8c0-.4.4-.8.8-.8h4.4c.4 0 .8.4.8.8v.7"/><path d="M9 11h6M9 15h4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10.5 5 5 5-5"/><path d="M5 20h14"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/></symbol>
+    <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.6"/><circle cx="6" cy="17" r="2.6"/><path d="M8.2 8.5 20 18M8.2 15.5 20 6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5c0-1.1.9-2 2-2h4l2 2h7c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2h-13c-1.1 0-2-.9-2-2z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a.6.6 0 0 0 .9.5l10.2-6.5a.6.6 0 0 0 0-1L8.9 5a.6.6 0 0 0-.9.5z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17.5 5-5 4 4 2.5-2.5 4.5 4.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8c0-.4.4-.8.8-.8h3.4c.4 0 .8.4.8.8V7M6.5 7l.9 12.2c.1 1 .9 1.8 1.9 1.8h5.4c1 0 1.8-.8 1.9-1.8L17.5 7"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V5.5c0-1.1-.9-2-2-2h-8c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h3"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12"/><circle cx="4.3" cy="6.5" r=".9"/><circle cx="4.3" cy="12" r=".9"/><circle cx="4.3" cy="17.5" r=".9"/></symbol>
+    <symbol id="i-wand" viewBox="0 0 24 24"><path d="m4 20 11-11M13.5 5.5l5 5"/><path d="M18 3v3M16.5 4.5h3M20 13v2.5M18.8 14.2h2.5M8 3.5V6M6.8 4.8h2.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5 13.9 10l6.6 2-6.6 2L12 20.5 10.1 14l-6.6-2 6.6-2z"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M7.5 4v16M16.5 4v16M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4"/></symbol>
+    <symbol id="i-gif" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 10.2a2 2 0 1 0 0 3.6V12H8.8M13 9.5v5M16 14.5v-5h2.5M16 12h2"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4.5c0 .8-.7 1.5-1.5 1.5h-11c-.8 0-1.5-.7-1.5-1.5v-11C4 6.7 4.7 6 5.5 6H10"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5"/><path d="M4.5 15.5v3c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2v-3"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand">
+      <img src="/icon.png" alt="" width="26" height="26">
+      <span class="brand-name">Video Downloader</span>
+      <span class="ver mono" id="ver"></span>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist">
+      <button role="tab" data-view="downloads" aria-selected="true"><svg><use href="#i-down"/></svg><span>Downloads</span><b class="badge" id="activeBadge" hidden></b></button>
+      <button role="tab" data-view="tools" data-local><svg><use href="#i-wand"/></svg><span>Tools</span></button>
+      <button role="tab" data-view="history" data-local><svg><use href="#i-clock"/></svg><span>History</span></button>
+    </nav>
+    <div class="top-actions">
+      <button class="pill accent" id="updateBtn" hidden><svg><use href="#i-spark"/></svg><span></span></button>
+      <button class="icon-btn" id="phoneBtn" data-local title="Phone link"><svg><use href="#i-phone"/></svg></button>
+      <button class="icon-btn" id="settingsBtn" data-local title="Settings"><svg><use href="#i-gear"/></svg></button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===== Downloads ===== -->
+    <section class="view active" id="view-downloads">
+      <div class="composer" id="composer">
+        <div class="input-row">
+          <svg class="lead"><use href="#i-link"/></svg>
+          <textarea id="links" rows="1" spellcheck="false" autocomplete="off" placeholder="Paste a link — or several, one per line" aria-label="Links to download"></textarea>
+          <button class="icon-btn" id="pasteBtn" title="Paste and download"><svg><use href="#i-paste"/></svg></button>
+          <button class="primary" id="goBtn"><span>Download</span><svg><use href="#i-down"/></svg></button>
+        </div>
+        <div class="opts-row">
+          <div class="seg" id="modeSeg" role="radiogroup" aria-label="What to save">
+            <i class="seg-glider"></i>
+            <button role="radio" data-mode="auto"><svg><use href="#i-video"/></svg>Video</button>
+            <button role="radio" data-mode="audio"><svg><use href="#i-music"/></svg>Audio</button>
+            <button role="radio" data-mode="mute"><svg><use href="#i-mute"/></svg>Mute</button>
+          </div>
+          <button class="chip" id="formatChip" title="Quality and format"><svg><use href="#i-film"/></svg><span></span><svg class="chev"><use href="#i-chev"/></svg></button>
+          <button class="chip" id="clipChip" title="Download only part of the video"><svg><use href="#i-cut"/></svg><span>Clip</span></button>
+          <button class="chip" id="folderChip" data-local title="Where files are saved"><svg><use href="#i-folder"/></svg><span></span><svg class="chev"><use href="#i-chev"/></svg></button>
+          <button class="chip" id="loginChip" data-local title="Login for private or members-only videos"><svg><use href="#i-lock"/></svg><span></span><svg class="chev"><use href="#i-chev"/></svg></button>
+        </div>
+        <div class="clip-row" id="clipRow" hidden>
+          <label>From <input id="clipStart" class="time" placeholder="0:00" inputmode="numeric"></label>
+          <label>to <input id="clipEnd" class="time" placeholder="end" inputmode="numeric"></label>
+          <span class="hint">Only this part is downloaded — great for long streams.</span>
+          <button class="ghost small" id="clipClear">Clear</button>
+        </div>
+      </div>
+
+      <div class="queue-head" id="queueHead" hidden>
+        <h2>Queue <span class="count mono" id="queueCount"></span></h2>
+        <div class="filters" id="filters">
+          <button data-filter="all" class="on">All</button>
+          <button data-filter="active">Active</button>
+          <button data-filter="done">Done</button>
+          <button data-filter="failed">Failed</button>
+        </div>
+        <div class="queue-actions">
+          <button class="ghost small" id="clearBtn">Clear finished</button>
+          <button class="ghost small" id="cancelAllBtn">Cancel all</button>
+        </div>
+      </div>
+      <ul class="queue" id="queue" aria-live="polite"></ul>
+
+      <div class="empty" id="empty">
+        <div class="empty-art" aria-hidden="true">
+          <span class="orb"></span>
+          <svg><use href="#i-down"/></svg>
+        </div>
+        <h3>Paste a link to start</h3>
+        <p>Copy a link from YouTube, TikTok, Instagram, X, Reddit, Twitch&nbsp;— then press <kbd>Ctrl</kbd>+<kbd>V</kbd> anywhere in this window.</p>
+        <p class="faint">Videos, music, photo posts and playlists · 1800+ sites</p>
+      </div>
+    </section>
+
+    <!-- ===== Tools ===== -->
+    <section class="view" id="view-tools">
+      <div class="view-head">
+        <h2>Tools</h2>
+        <p class="muted">For files you already have. Drop files on the window or pick them below — the original is never changed.</p>
+      </div>
+      <div class="tool-grid" id="toolGrid"></div>
+    </section>
+
+    <!-- ===== History ===== -->
+    <section class="view" id="view-history">
+      <div class="view-head row">
+        <h2>History</h2>
+        <label class="search"><svg><use href="#i-search"/></svg><input id="historySearch" placeholder="Search downloads" type="search"></label>
+        <button class="ghost small" id="historyClear">Clear history</button>
+      </div>
+      <ul class="history" id="historyList"></ul>
+      <div class="empty small" id="historyEmpty" hidden><h3>Nothing here yet</h3><p>Finished downloads show up here, so you can find or grab them again.</p></div>
+    </section>
+  </main>
+
+  <!-- settings drawer -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Settings" aria-hidden="true">
+    <div class="drawer-head"><h2 id="drawerTitle">Settings</h2><button class="icon-btn" data-close><svg><use href="#i-x"/></svg></button></div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
+  <!-- picker / dialogs -->
+  <div class="sheet-wrap" id="sheetWrap" aria-hidden="true">
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="popover" id="popover" role="menu"></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="dropzone" id="dropzone"><div><svg><use href="#i-down"/></svg><b>Drop to download</b><span>Links, or files for the tools</span></div></div>
+  <div class="offline" id="offline" hidden>Reconnecting…</div>
+</div>
+</body>
+</html>

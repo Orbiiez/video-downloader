@@ -13,12 +13,17 @@ import glob
 import json
 import math
 import os
+import sys
 import tempfile
 import time
 import urllib.parse
-from ctypes import wintypes
 
-APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "VideoDownloader")
+if os.name == "nt":
+    APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "VideoDownloader")
+elif sys.platform == "darwin":
+    APP_DIR = os.path.expanduser("~/Library/Application Support/VideoDownloader")
+else:
+    APP_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "VideoDownloader")
 STORE = os.path.join(APP_DIR, "login.bin")
 MAX_AGE_DAYS = 30
 TEMP_PREFIX = "vdl_cookies_"
@@ -44,7 +49,7 @@ class CookieError(Exception):
 
 # ---------- Windows DPAPI ----------
 class _Blob(ctypes.Structure):
-    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
 def _in_blob(data):
@@ -53,6 +58,8 @@ def _in_blob(data):
 
 
 def _dpapi(data, protect):
+    if os.name != "nt":
+        raise CookieError("saved logins are only available on Windows; use 'Read from browser' instead")
     crypt32, kernel32 = ctypes.windll.crypt32, ctypes.windll.kernel32
     src, _keep1 = _in_blob(data)
     ent, _keep2 = _in_blob(_ENTROPY)
